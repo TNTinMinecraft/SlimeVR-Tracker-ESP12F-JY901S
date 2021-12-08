@@ -21,6 +21,8 @@
     THE SOFTWARE.
 */
 
+#include "defines.h"
+
 #ifdef IMU_MPU6050_RUNTIME_CALIBRATION
     #include "MPU6050_6Axis_MotionApps_V6_12.h"
 #else
@@ -106,7 +108,7 @@ void MPU6050Sensor::motionSetup() {
         Serial.println(F("[NOTICE] Enabling DMP..."));
         imu.setDMPEnabled(true);
 
-        // TODO: Add interupt support
+        // TODO: Add interrupt support
         // mpuIntStatus = imu.getIntStatus();
 
         // set our DMP Ready flag so the main loop() function knows it's okay to use it
