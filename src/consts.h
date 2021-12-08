@@ -20,6 +20,9 @@
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
     THE SOFTWARE.
 */
+#ifndef SLIMEVR_CONSTS_H_
+#define SLIMEVR_CONSTS_H_
+
 // List of constants used in other places
 #define IMU_MPU9250 1
 #define IMU_MPU6500 2
@@ -28,6 +31,7 @@
 #define IMU_BNO086 4
 #define IMU_BNO055 5
 #define IMU_MPU6050 6
+#define IMU_JY901 7
 
 #define BOARD_SLIMEVR 1
 #define BOARD_SLIMEVR_DEV 2
@@ -35,6 +39,12 @@
 #define BOARD_CUSTOM 4
 #define BOARD_WROOM32 5
 #define BOARD_WEMOSD1MINI 6
+#define BOARD_TTGO_TBASE 7
+
+#define DEG_0 0.f
+#define DEG_90 -PI / 2
+#define DEG_180 PI
+#define DEG_270 PI / 2
 
 #ifndef LED_BUILTIN
 #define LED_BUILTIN 2
@@ -47,3 +57,5 @@
 #else
   #define HARDWARE_MCU 0
 #endif
+
+#endif // SLIMEVR_CONSTS_H_

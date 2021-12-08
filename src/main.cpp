@@ -47,6 +47,10 @@
     MPU6050Sensor sensor{};
     #define HAS_SECOND_IMU true
     MPU6050Sensor sensor2{};
+#elif IMU == IMU_JY901
+    JY901Sensor sensor{};
+    #define HAS_SECOND_IMU true
+    JY901Sensor sensor2{};
 #else
     #error Unsupported IMU
 #endif
@@ -58,10 +62,12 @@ bool isCalibrating = false;
 bool blinking = false;
 unsigned long blinkStart = 0;
 unsigned long now_ms, last_ms = 0; //millis() timers
+unsigned long IMU_last_ms_1, IMU_start_ms_1 = 0; //millis() timers
+unsigned long IMU_last_ms_2, IMU_start_ms_2 = 0; //millis() timers
 unsigned long last_battery_sample = 0;
 bool secondImuActive = false;
 
-void commandRecieved(int command, void * const commandData, int commandDataLength)
+void commandReceived(int command, void * const commandData, int commandDataLength)
 {
     switch (command)
     {
@@ -84,8 +90,8 @@ void setup()
     // Glow diode while loading
     pinMode(LOADING_LED, OUTPUT);
     pinMode(CALIBRATING_LED, OUTPUT);
-    digitalWrite(CALIBRATING_LED, HIGH);
-    digitalWrite(LOADING_LED, LOW);
+    digitalWrite(CALIBRATING_LED, LOW);
+    digitalWrite(LOADING_LED, HIGH);
     
     Serial.begin(serialBaudRate);
     setUpSerialCommands();
@@ -96,13 +102,13 @@ void setup()
     // join I2C bus
     Wire.begin(PIN_IMU_SDA, PIN_IMU_SCL);
 #ifdef ESP8266
-    Wire.setClockStretchLimit(150000L); // Default streatch limit 150mS
+    Wire.setClockStretchLimit(150000L); // Default stretch limit 150mS
 #endif
     Wire.setClock(I2C_SPEED);
 
     getConfigPtr();
-    setConfigRecievedCallback(setConfig);
-    setCommandRecievedCallback(commandRecieved);
+    setConfigReceivedCallback(setConfig);
+    setCommandReceivedCallback(commandReceived);
     // Wait for IMU to boot
     delay(500);
     
@@ -120,6 +126,21 @@ void setup()
         }
     #else
     sensor.setupBNO080(0, I2CSCAN::pickDevice(0x4A, 0x4B, true), PIN_IMU_INT);
+    #endif
+#endif
+#if IMU == IMU_JY901
+    #ifdef HAS_SECOND_IMU
+        uint8_t first = I2CSCAN::pickDevice(JY_ADDR_1, JY_ADDR_2, true);
+        uint8_t second = I2CSCAN::pickDevice(JY_ADDR_2, JY_ADDR_1, false);
+        if(first != second) {
+            sensor.setupJY901(0, first);
+            sensor2.setupJY901(1, second);
+            secondImuActive = true;
+        } else {
+            sensor.setupJY901(0, first);
+        }
+    #else
+    sensor.setupJY901(0, I2CSCAN::pickDevice(JY_ADDR_1, JY_ADDR_2, true));
     #endif
 #endif
 #if IMU == IMU_MPU6050 || IMU == IMU_MPU6500
@@ -141,7 +162,7 @@ void setup()
 
     setUpWiFi();
     otaSetup(otaPassword);
-    digitalWrite(LOADING_LED, HIGH);
+    digitalWrite(LOADING_LED, LOW);
 }
 
 // AHRS loop
@@ -162,9 +183,27 @@ void loop()
 #ifndef UPDATE_IMU_UNCONNECTED
         if(isConnected()) {
 #endif
+#if IMU == IMU_JY901
+    IMU_start_ms_1=millis();
+    if((IMU_start_ms_1-IMU_last_ms_1)>IMU1_SAMPLE_RATE)
+    {
+        sensor.motionLoop();
+        IMU_last_ms_1=millis();
+    }
+    #if HAS_SECOND_IMU
+        if(secondImuActive)
+        IMU_start_ms_2=millis();
+        if((IMU_start_ms_2-IMU_last_ms_2)>IMU2_SAMPLE_RATE)
+        {
+            sensor2.motionLoop();
+            IMU_last_ms_2=millis();
+        }
+    #endif
+#else
     sensor.motionLoop();
-#ifdef HAS_SECOND_IMU
-    sensor2.motionLoop();
+    #ifdef HAS_SECOND_IMU
+        sensor2.motionLoop();
+    #endif
 #endif
 #ifndef UPDATE_IMU_UNCONNECTED
         }
