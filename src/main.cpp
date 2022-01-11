@@ -65,6 +65,7 @@ unsigned long now_ms, last_ms = 0; //millis() timers
 unsigned long IMU_last_ms_1, IMU_start_ms_1 = 0; //millis() timers
 unsigned long IMU_last_ms_2, IMU_start_ms_2 = 0; //millis() timers
 unsigned long last_battery_sample = 0;
+unsigned long last_rssi_sample = 0;
 bool secondImuActive = false;
 
 void commandReceived(int command, void * const commandData, int commandDataLength)
@@ -239,4 +240,9 @@ void loop()
         send2Floats(battery, batteryLevel, PACKET_BATTERY_LEVEL);
     }
 #endif
+    if(now_ms - last_rssi_sample >= 2000) {
+        last_rssi_sample = now_ms;
+        int8_t signalStrength = WiFi.RSSI();
+        sendByte(signalStrength, 0, PACKET_SIGNAL_STRENGTH);
+    }
 }
