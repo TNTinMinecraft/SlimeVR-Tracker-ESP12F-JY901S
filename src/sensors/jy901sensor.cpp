@@ -21,29 +21,9 @@
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
     SOFTWARE.
 */
-#include "defines.h"
-
-#include "sensor.h"
-#include "udpclient.h"
-#include <i2cscan.h>
-#include "calibration.h"
-#include "configuration.h"
-
-namespace
-{
-    void signalAssert()
-    {
-        for (int i = 0; i < 200; ++i)
-        {
-            delay(50);
-            digitalWrite(LOADING_LED, HIGH);
-            delay(50);
-            digitalWrite(LOADING_LED, LOW);
-        }
-    }
-}
-
-bool newData = false;
+#include "sensors/jy901sensor.h"
+#include "network/network.h"
+#include "ledmgr.h"
 
 void JY901Sensor::setupJY901(uint8_t sensorId, uint8_t addr)
 {
@@ -57,12 +37,12 @@ void JY901Sensor::motionSetup()
     if (!imu.StartIIC(addr))
     {
         Serial.print("[ERR] IMU: Can't connect to ");
-        Serial.println(IMU_NAME);
-        signalAssert();
+        Serial.println(getIMUNameByType(sensorType));
+        LEDManager::signalAssert();
         return;
     }
     Serial.print("[NOTICE] IMU: Connected to ");
-    Serial.print(IMU_NAME);
+    Serial.print(getIMUNameByType(sensorType));
     Serial.print(" on 0x");
     Serial.println(addr, HEX);
     working = true;
@@ -82,43 +62,47 @@ void JY901Sensor::motionLoop()
         newData = true;
         lastQuatSent = quaternion;
     }
-    // tap = imu.GetTapDetector();
+    tap = imu.GetTapDetector();
 }
+
 void JY901Sensor::sendData()
 {
     if (newData)
     {
-        // sendQuat(&quaternion, PACKET_ROTATION);
-        sendRotationData(&quaternion, DATA_TYPE_NORMAL, 1, sensorId, PACKET_ROTATION_DATA);
-        // sendVector(a, PACKET_ACCEL);
-        // sendRotationData(&quaternion, DATA_TYPE_CORRECTION, 1, sensorId, PACKET_ROTATION_DATA);
         newData = false;
-        // Serial.print("[DBG] Quaternion: ");
-        // Serial.print(quaternion.x);
-        // Serial.print(",");
-        // Serial.print(quaternion.y);
-        // Serial.print(",");
-        // Serial.print(quaternion.z);
-        // Serial.print(",");
-        // Serial.println(quaternion.w);
+        Network::sendRotationData(&quaternion, DATA_TYPE_NORMAL, 1, sensorId);
+#ifdef FULL_DEBUG
+        Serial.print("[DBG] Quaternion: ");
+        Serial.print(quaternion.x);
+        Serial.print(",");
+        Serial.print(quaternion.y);
+        Serial.print(",");
+        Serial.print(quaternion.z);
+        Serial.print(",");
+        Serial.println(quaternion.w);
+#endif
     }
-    // if(tap != 0) {
-    //     sendByte(tap, sensorId, PACKET_TAP);
-    //     // Serial.print("[DBG] Tap: ");
-    //     // Serial.println(tap);
-    //     tap = 0;
-    // }
+    if (tap != 0)
+    {
+        Network::sendTap(tap, sensorId);
+        tap = 0;
+#ifdef FULL_DEBUG
+        Serial.print("[DBG] Tap: ");
+        Serial.println(tap);
+#endif
+    }
 }
 void JY901Sensor::startCalibration(int calibrationType)
 {
+    LEDManager::pattern(CALIBRATING_LED, 20, 20, 10);
+    LEDManager::blink(CALIBRATING_LED, 2000);
     imu.Unlock();
-    digitalWrite(CALIBRATING_LED, HIGH);
     delay(2000);
-    digitalWrite(CALIBRATING_LED, LOW);
+    LEDManager::on(CALIBRATING_LED);
     imu.SetDirection(1);
     imu.SetCalsw(calibrationType);
     delay(6000);
+    LEDManager::off(CALIBRATING_LED);
     imu.Save(0);
     delay(100);
-    sendCalibrationFinished(CALIBRATION_TYPE_INTERNAL_ACCEL, 0, PACKET_RAW_CALIBRATION_DATA);
 }

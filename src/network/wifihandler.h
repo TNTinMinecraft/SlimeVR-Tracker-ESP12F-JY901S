@@ -20,15 +20,22 @@
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
     THE SOFTWARE.
 */
+#ifndef SLIMEVR_WIFI_H_
+#define SLIMEVR_WIFI_H_
 
-#ifndef _OTA_H_
-#define _OTA_H 1
+#include "configuration.h"
+#ifdef ESP8266
+    #include <ESP8266WiFi.h>
+#else
+    #include <WiFi.h>
+#endif
 
-#include <ArduinoOTA.h>
-
-namespace OTA {
-    void otaSetup(const char * const otaPassword);
-    void otaUpdate();
+namespace WiFiNetwork {
+    bool isConnected();
+    void setUp();
+    void upkeep();
+    void setWiFiCredentials(const char * SSID, const char * pass);
+    IPAddress getAddress();
 }
 
-#endif // _OTA_H_
+#endif // SLIMEVR_WIFI_H_

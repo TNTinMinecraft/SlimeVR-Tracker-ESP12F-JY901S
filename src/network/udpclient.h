@@ -20,18 +20,29 @@
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
     THE SOFTWARE.
 */
-#ifndef SLIMEVR_LEDSTATUS_H_
-#define SLIMEVR_LEDSTATUS_H_
+#ifndef SLIMEVR_UDP_CLIENT_H_
+#define SLIMEVR_UDP_CLIENT_H_
+#ifdef ESP8266
+    #include <ESP8266WiFi.h>
+    #include <ESPAsyncUDP.h>
+#else
+    #include <WiFi.h>
+    #include <AsyncUDP.h>
+#endif
+#include <Arduino.h>
+#include "quat.h"
+#include "configuration.h"
+#include "sensors/sensor.h"
+#include "wifihandler.h"
+#include "globals.h"
 
-#include "defines.h"
-#include "Arduino.h"
+namespace ServerConnection {
+    void connect();
+    void update(Sensor * const sensor, Sensor * const sensor2);
+    void resetConnection();
+    bool isConnected();
+    size_t packet_read(AsyncUDPPacket packet, uint8_t *data, size_t len);
+    void onPacketCallBack(AsyncUDPPacket packet);
+}
 
-#define LED_STATUS_SERVER_CONNECTING 2
-#define LED_STATUS_WIFI_CONNECTING 4
-#define LED_STATUS_IMU_ERROR 256
-
-void setLedStatus(uint32_t status);
-void unsetLedStatus(uint32_t status);
-void ledStatusUpdate();
-
-#endif // SLIMEVR_LEDSTATUS_H_
+#endif // SLIMEVR_UDP_CLIENT_H_
