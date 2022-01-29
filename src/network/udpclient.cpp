@@ -366,13 +366,13 @@ void Network::sendHandshake()
         if (DataTransfer::endPacket())
         {
             Serial.print("Handshake write error: ");
-            Serial.println(Udp.lastErr());
+            Serial.println(Udp.getWriteError());
         }
     }
     else
     {
         Serial.print("Handshake write error: ");
-        Serial.println(Udp.lastErr());
+        Serial.println(Udp.getWriteError());
     }
 }
 
