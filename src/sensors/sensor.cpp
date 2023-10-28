@@ -21,39 +21,51 @@
     THE SOFTWARE.
 */
 #include "sensor.h"
-#include "network/network.h"
+#include "GlobalVars.h"
 #include <i2cscan.h>
 #include "calibration.h"
 
-void Sensor::setupSensor(uint8_t expectedSensorType, uint8_t sensorId, uint8_t addr, uint8_t intPin) {
-    this->sensorType = expectedSensorType;
-    this->addr = addr;
-    this->intPin = intPin;
-    this->sensorId = sensorId;
-    this->sensorOffset = {Quat(Vector3(0, 0, 1), sensorId == 0 ? IMU_ROTATION : SECOND_IMU_ROTATION)};
+SensorStatus Sensor::getSensorState() {
+    return isWorking() ? SensorStatus::SENSOR_OK : SensorStatus::SENSOR_ERROR;
 }
 
-uint8_t Sensor::getSensorState() {
-    return isWorking() ? SensorStatus::SENSOR_OK : SensorStatus::SENSOR_OFFLINE;
+void Sensor::setAccelerationReady() {
+    newAcceleration = true;
+}
+
+void Sensor::setFusedRotationReady() {
+    bool changed = OPTIMIZE_UPDATES ? !lastFusedRotationSent.equalsWithEpsilon(fusedRotation) : true;
+    if (ENABLE_INSPECTION || changed) {
+        newFusedRotation = true;
+        lastFusedRotationSent = fusedRotation;
+    }
 }
 
 void Sensor::sendData() {
-    if(newData) {
-        newData = false;
-        Network::sendRotationData(&quaternion, DATA_TYPE_NORMAL, calibrationAccuracy, sensorId);
-        #ifdef FULL_DEBUG
-            Serial.print("[DBG] Quaternion: ");
-            Serial.print(quaternion.x);
-            Serial.print(",");
-            Serial.print(quaternion.y);
-            Serial.print(",");
-            Serial.print(quaternion.z);
-            Serial.print(",");
-            Serial.print(quaternion.w);
-            Serial.print("\n");
-        #endif
+    if (newFusedRotation) {
+        newFusedRotation = false;
+        networkConnection.sendRotationData(sensorId, &fusedRotation, DATA_TYPE_NORMAL, calibrationAccuracy);
+
+#ifdef DEBUG_SENSOR
+        m_Logger.trace("Quaternion: %f, %f, %f, %f", UNPACK_QUATERNION(fusedRotation));
+#endif
+
+#if SEND_ACCELERATION
+        if (newAcceleration) {
+            newAcceleration = false;
+            networkConnection.sendSensorAcceleration(sensorId, acceleration);
+        }
+#endif
     }
 }
+
+void Sensor::printTemperatureCalibrationUnsupported() {
+    m_Logger.error("Temperature calibration not supported for IMU %s", getIMUNameByType(sensorType));
+}
+void Sensor::printTemperatureCalibrationState() { printTemperatureCalibrationUnsupported(); };
+void Sensor::printDebugTemperatureCalibrationState() { printTemperatureCalibrationUnsupported(); };
+void Sensor::saveTemperatureCalibration() { printTemperatureCalibrationUnsupported(); };
+void Sensor::resetTemperatureCalibrationState() { printTemperatureCalibrationUnsupported(); };
 
 const char * getIMUNameByType(int imuType) {
     switch(imuType) {
@@ -71,6 +83,14 @@ const char * getIMUNameByType(int imuType) {
             return "MPU6050";
         case IMU_BNO086:
             return "BNO086";
-    }
+        case IMU_BMI160:
+            return "BMI160";
+        case IMU_ICM20948:
+            return "ICM20948";
+        case IMU_ICM42688:
+            return "ICM42688";
+		case IMU_JY901:
+			return "JY901";
+	}
     return "Unknown";
 }

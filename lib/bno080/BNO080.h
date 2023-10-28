@@ -129,15 +129,23 @@ const byte CHANNEL_GYRO = 5;
 #define COMMAND_OSCILLATOR 10
 #define COMMAND_CLEAR_DCD 11
 
-#define CALIBRATE_ACCEL 0
-#define CALIBRATE_GYRO 1
-#define CALIBRATE_MAG 2
-#define CALIBRATE_PLANAR_ACCEL 3
-#define CALIBRATE_ACCEL_GYRO_MAG 4
-#define CALIBRATE_STOP 5
+#define SH2_CAL_ACCEL (0x01)
+#define SH2_CAL_GYRO_IN_HAND  (0x02)
+#define SH2_CAL_MAG   (0x04)
+#define SH2_CAL_PLANAR (0x08)
+#define SH2_CAL_ON_TABLE (0x10)
 
 #define MAX_PACKET_SIZE 128 //Packets can be up to 32k but we don't have that much RAM.
 #define MAX_METADATA_SIZE 9 //This is in words. There can be many but we mostly only care about the first 9 (Qs, range, etc)
+
+struct BNO080Error {
+	uint8_t severity;
+	uint8_t error_sequence_number;
+	uint8_t error_source;
+	uint8_t error;
+	uint8_t error_module;
+	uint8_t error_code;
+};
 
 class BNO080
 {
@@ -148,6 +156,7 @@ public:
 	void enableDebugging(Stream &debugPort = Serial); //Turn on debug printing. If user doesn't specify then Serial will be used.
 
 	void softReset();	  //Try to reset the IMU via software
+	void waitForCompletedReset(uint32_t timeout);
 	uint8_t resetReason(); //Query the IMU for the reason it last reset
 	void modeOn();	  //Use the executable channel to turn the BNO on
 	void modeSleep();	  //Use the executable channel to put the BNO to sleep
@@ -228,12 +237,7 @@ public:
 	float getMagY();
 	float getMagZ();
 	uint8_t getMagAccuracy();
-
-	void calibrateAccelerometer();
-	void calibrateGyro();
-	void calibrateMagnetometer();
-	void calibratePlanarAccelerometer();
-	void calibrateAll();
+	
 	void endCalibration();
 	void saveCalibration();
 	void requestCalibrationStatus(); //Sends command to get status
@@ -276,6 +280,8 @@ public:
 	uint32_t readFRSword(uint16_t recordID, uint8_t wordNumber);
 	void frsReadRequest(uint16_t recordID, uint16_t readOffset, uint16_t blockSize);
 	bool readFRSdata(uint16_t recordID, uint8_t startLocation, uint8_t wordsToRead);
+
+	BNO080Error readError();
 
 	//Global Variables
 	uint8_t shtpHeader[4]; //Each packet has a header of 4 bytes

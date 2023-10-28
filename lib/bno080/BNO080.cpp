@@ -67,18 +67,21 @@ boolean BNO080::begin(uint8_t deviceAddress, TwoWire &wirePort, uint8_t intPin)
 	//Transmit packet on channel 2, 2 bytes
 	sendPacket(CHANNEL_CONTROL, 2);
 
-	//Now we wait for response
-	if (receivePacket() == true)
-	{
-		if (shtpData[0] == SHTP_REPORT_PRODUCT_ID_RESPONSE)
-		{
+	uint32_t tInitialResetTimeMS = millis();
+	bool tBoardInfoReceived = false;
+
+	// Wait max 2.5s for the product_id_response and ignore other packets received during that time.
+	while (millis() - tInitialResetTimeMS < 2500 && (!tBoardInfoReceived)) {
+		receivePacket();
+		if (shtpHeader[2] == 2 && shtpData[0] == SHTP_REPORT_PRODUCT_ID_RESPONSE) {
+			tBoardInfoReceived = true;
+			swMajor = shtpData[2];
+			swMinor = shtpData[3];
+			swPartNumber = ((uint32_t)shtpData[7] << 24) | ((uint32_t)shtpData[6] << 16) | ((uint32_t)shtpData[5] << 8) | ((uint32_t)shtpData[4]);
+			swBuildNumber = ((uint32_t)shtpData[11] << 24) | ((uint32_t)shtpData[10] << 16) | ((uint32_t)shtpData[9] << 8) | ((uint32_t)shtpData[8]);
+			swVersionPatch = ((uint16_t)shtpData[13] << 8) | ((uint16_t)shtpData[12]);
 			if (_printDebug == true)
 			{
-				swMajor = shtpData[2];
-				swMinor = shtpData[3];
-				swPartNumber = ((uint32_t)shtpData[7] << 24) | ((uint32_t)shtpData[6] << 16) | ((uint32_t)shtpData[5] << 8) | ((uint32_t)shtpData[4]);
-				swBuildNumber = ((uint32_t)shtpData[11] << 24) | ((uint32_t)shtpData[10] << 16) | ((uint32_t)shtpData[9] << 8) | ((uint32_t)shtpData[8]);
-				swVersionPatch = ((uint16_t)shtpData[13] << 8) | ((uint16_t)shtpData[12]);
 				_debugPort->print(F("SW Version Major: 0x"));
 				_debugPort->print(swMajor, HEX);
 				_debugPort->print(F(" SW Version Minor: 0x"));
@@ -90,11 +93,10 @@ boolean BNO080::begin(uint8_t deviceAddress, TwoWire &wirePort, uint8_t intPin)
 				_debugPort->print(F(" SW Version Patch: 0x"));
 				_debugPort->println(swVersionPatch, HEX);
 			}
-			return (true);
 		}
 	}
 
-	return (false); //Something went wrong
+	return tBoardInfoReceived;
 }
 
 boolean BNO080::beginSPI(uint8_t user_CSPin, uint8_t user_WAKPin, uint8_t user_INTPin, uint8_t user_RSTPin, uint32_t spiPortSpeed, SPIClass &spiPort)
@@ -157,6 +159,7 @@ boolean BNO080::beginSPI(uint8_t user_CSPin, uint8_t user_WAKPin, uint8_t user_I
 	if (receivePacket() == true)
 	{
 		if (shtpData[0] == SHTP_REPORT_PRODUCT_ID_RESPONSE)
+		{
 			if (_printDebug == true)
 			{
 				_debugPort->print(F("SW Version Major: 0x"));
@@ -174,6 +177,7 @@ boolean BNO080::beginSPI(uint8_t user_CSPin, uint8_t user_WAKPin, uint8_t user_I
 				_debugPort->println(SW_Version_Patch, HEX);
 			}
 			return (true);
+		}
 	}
 
 	return (false); //Something went wrong
@@ -1027,24 +1031,51 @@ bool BNO080::readFRSdata(uint16_t recordID, uint8_t startLocation, uint8_t words
 	}
 }
 
+// After power on or completed reset, the BNO will send two messages. One
+// reply and one unsolicited message.
+// 1) Reset message on SHTP channel 1
+// 2) Unsolicited initialization message on SHTP channel 2
+// See 5.2.1 on BNO08X datasheet.
+// Wait For both of these packets specifically up to a max time and exit
+// after both packets are read or max waiting time is reached.
+void BNO080::waitForCompletedReset(uint32_t timeout)
+{
+	uint32_t tInitialResetTimeMS = millis();
+	bool tResetCompleteReceived = false;
+	bool tUnsolicitedResponseReceived = false;
+	shtpHeader[2] = 0; // Make sure we aren't reading old data.
+	shtpData[0] = 0;
+
+	// Wait requested timeout for the two packets. OR Until we get both reset responses.
+	while (millis() - tInitialResetTimeMS < timeout &&
+	       (!tResetCompleteReceived || !tUnsolicitedResponseReceived)) {
+		#ifdef ESP8266
+			ESP.wdtFeed();
+		#endif
+		receivePacket();
+		if (shtpHeader[2] == 1 && shtpData[0] == 0x01) {
+			tResetCompleteReceived = true;
+		}
+		if (shtpHeader[2] == 2 && shtpData[0] == 0xF1) {
+			tUnsolicitedResponseReceived = true;
+		}
+	}
+}
+
 //Send command to reset IC
 //Read all advertisement packets from sensor
-//The sensor has been seen to reset twice if we attempt too much too quickly.
-//This seems to work reliably.
 void BNO080::softReset(void)
 {
+	// after power-on sensor is resetting by itself
+	// let's handle that POTENTIAL reset with shorter timeout
+	// in case sensor was not resetted - like after issuing RESET command
+	waitForCompletedReset(1000);
 	shtpData[0] = 1; //Reset
 
 	//Attempt to start communication with sensor
 	sendPacket(CHANNEL_EXECUTABLE, 1); //Transmit packet on channel 1, 1 byte
-
-	//Read all incoming data and flush it
-	delay(50);
-	while (receivePacket() == true)
-		; //delay(1);
-	delay(50);
-	while (receivePacket() == true)
-		; //delay(1);
+	// now that reset should occur for sure, so let's try with longer timeout
+	waitForCompletedReset(5000);
 }
 
 //Set the operating mode to "On"
@@ -1103,6 +1134,31 @@ uint8_t BNO080::resetReason()
 	}
 
 	return (0);
+}
+
+//Get the last error if it exists
+BNO080Error BNO080::readError()
+{
+	sendCommand(COMMAND_ERRORS);
+
+	BNO080Error err;
+	err.error_source = 255;
+
+	//Now we wait for response
+	if (receivePacket() == true)
+	{
+		if (shtpData[0] == SHTP_REPORT_COMMAND_RESPONSE && shtpData[2] == COMMAND_ERRORS)
+		{
+			err.severity = shtpData[5];
+			err.error_sequence_number = shtpData[6];
+			err.error_source = shtpData[7];
+			err.error = shtpData[8];
+			err.error_module = shtpData[9];
+			err.error_code = shtpData[10];
+		}
+	}
+
+	return err;
 }
 
 //Given a register value and a Q point, convert to float
@@ -1220,39 +1276,9 @@ void BNO080::enableActivityClassifier(uint16_t timeBetweenReports, uint32_t acti
 	setFeatureCommand(SENSOR_REPORTID_PERSONAL_ACTIVITY_CLASSIFIER, timeBetweenReports, activitiesToEnable);
 }
 
-//Sends the commands to begin calibration of the accelerometer
-void BNO080::calibrateAccelerometer()
-{
-	sendCalibrateCommand(CALIBRATE_ACCEL);
-}
-
-//Sends the commands to begin calibration of the gyro
-void BNO080::calibrateGyro()
-{
-	sendCalibrateCommand(CALIBRATE_GYRO);
-}
-
-//Sends the commands to begin calibration of the magnetometer
-void BNO080::calibrateMagnetometer()
-{
-	sendCalibrateCommand(CALIBRATE_MAG);
-}
-
-//Sends the commands to begin calibration of the planar accelerometer
-void BNO080::calibratePlanarAccelerometer()
-{
-	sendCalibrateCommand(CALIBRATE_PLANAR_ACCEL);
-}
-
-//See 2.2 of the Calibration Procedure document 1000-4044
-void BNO080::calibrateAll()
-{
-	sendCalibrateCommand(CALIBRATE_ACCEL_GYRO_MAG);
-}
-
 void BNO080::endCalibration()
 {
-	sendCalibrateCommand(CALIBRATE_STOP); //Disables all calibrations
+	sendCalibrateCommand(0); //Disables all calibrations
 }
 
 //See page 51 of reference manual - ME Calibration Response
@@ -1324,37 +1350,34 @@ void BNO080::sendCommand(uint8_t command)
 
 //This tells the BNO080 to begin calibrating
 //See page 50 of reference manual and the 1000-4044 calibration doc
+//The argument is a set of binary flags see SH2_CAL_ACCEL
 void BNO080::sendCalibrateCommand(uint8_t thingToCalibrate)
 {
-	/*shtpData[3] = 0; //P0 - Accel Cal Enable
-	shtpData[4] = 0; //P1 - Gyro Cal Enable
+	/*
+	shtpData[3] = 0; //P0 - Accel Cal Enable
+	shtpData[4] = 0; //P1 - Gyro In-Hand Cal Enable
 	shtpData[5] = 0; //P2 - Mag Cal Enable
 	shtpData[6] = 0; //P3 - Subcommand 0x00
 	shtpData[7] = 0; //P4 - Planar Accel Cal Enable
-	shtpData[8] = 0; //P5 - Reserved
+	shtpData[8] = 0; //P5 - Gyro On-Table Cal Enable
 	shtpData[9] = 0; //P6 - Reserved
 	shtpData[10] = 0; //P7 - Reserved
-	shtpData[11] = 0; //P8 - Reserved*/
+	shtpData[11] = 0; //P8 - Reserved
+	*/
 
 	for (uint8_t x = 3; x < 12; x++) //Clear this section of the shtpData array
 		shtpData[x] = 0;
 
-	if (thingToCalibrate == CALIBRATE_ACCEL)
+	if ((thingToCalibrate & SH2_CAL_ACCEL) > 1)
 		shtpData[3] = 1;
-	else if (thingToCalibrate == CALIBRATE_GYRO)
+	if ((thingToCalibrate & SH2_CAL_GYRO_IN_HAND) > 1)
 		shtpData[4] = 1;
-	else if (thingToCalibrate == CALIBRATE_MAG)
+	if ((thingToCalibrate & SH2_CAL_MAG) > 1)
 		shtpData[5] = 1;
-	else if (thingToCalibrate == CALIBRATE_PLANAR_ACCEL)
+	if ((thingToCalibrate & SH2_CAL_PLANAR) > 1)
 		shtpData[7] = 1;
-	else if (thingToCalibrate == CALIBRATE_ACCEL_GYRO_MAG)
-	{
-		shtpData[3] = 1;
-		shtpData[4] = 1;
-		shtpData[5] = 1;
-	}
-	else if (thingToCalibrate == CALIBRATE_STOP)
-		; //Do nothing, bytes are set to zero
+	if ((thingToCalibrate & SH2_CAL_ON_TABLE) > 1)
+		shtpData[8] = 1;
 
 	//Make the internal calStatus variable non-zero (operation failed) so that user can test while we wait
 	calibrationStatus = 1;

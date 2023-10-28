@@ -1,6 +1,6 @@
 /*
     SlimeVR Code is placed under the MIT license
-    Copyright (c) 2021 Eiren Rain
+    Copyright (c) 2021 Eiren Rain & SlimeVR contributors
 
     Permission is hereby granted, free of charge, to any person obtaining a copy
     of this software and associated documentation files (the "Software"), to deal
@@ -21,40 +21,56 @@
     THE SOFTWARE.
 */
 #include "bno055sensor.h"
-#include "network/network.h"
 #include "globals.h"
-#include "ledmgr.h"
+#include "GlobalVars.h"
 
 void BNO055Sensor::motionSetup() {
     imu = Adafruit_BNO055(sensorId, addr);
     delay(3000);
+#if USE_6_AXIS
     if (!imu.begin(Adafruit_BNO055::OPERATION_MODE_IMUPLUS))
+#else
+    if (!imu.begin(Adafruit_BNO055::OPERATION_MODE_NDOF))
+#endif
     {
-        Serial.print("[ERR] IMU BNO055: Can't connect to ");
-        Serial.println(getIMUNameByType(sensorType));
-        LEDManager::signalAssert();
+        m_Logger.fatal("Can't connect to BNO055 at address 0x%02x", addr);
+        ledManager.pattern(50, 50, 200);
         return;
     }
 
     delay(1000);
-    imu.setExtCrystalUse(false);
+    imu.setExtCrystalUse(true); //Adafruit BNO055's use external crystal. Enable it, otherwise it does not work.
     imu.setAxisRemap(Adafruit_BNO055::REMAP_CONFIG_P0);
     imu.setAxisSign(Adafruit_BNO055::REMAP_SIGN_P0);
-    Serial.print("[NOTICE] Connected to");
-    Serial.println(getIMUNameByType(sensorType));
+    m_Logger.info("Connected to BNO055 at address 0x%02x", addr);
+
     working = true;
     configured = true;
 }
 
 void BNO055Sensor::motionLoop() {
+#if ENABLE_INSPECTION
+    {
+        Vector3 gyro = imu.getVector(Adafruit_BNO055::VECTOR_GYROSCOPE);
+        Vector3 accel = imu.getVector(Adafruit_BNO055::VECTOR_LINEARACCEL);
+        Vector3 mag = imu.getVector(Adafruit_BNO055::VECTOR_MAGNETOMETER);
+
+        networkConnection.sendInspectionRawIMUData(sensorId, UNPACK_VECTOR(gyro), 255, UNPACK_VECTOR(accel), 255, UNPACK_VECTOR(mag), 255);
+    }
+#endif
+
     // TODO Optimize a bit with setting rawQuat directly
     Quat quat = imu.getQuat();
-    quaternion.set(quat.x, quat.y, quat.z, quat.w);
-    quaternion *= sensorOffset;
-    if(!OPTIMIZE_UPDATES || !lastQuatSent.equalsWithEpsilon(quaternion)) {
-        newData = true;
-        lastQuatSent = quaternion;
+    fusedRotation.set(quat.x, quat.y, quat.z, quat.w);
+    fusedRotation *= sensorOffset;
+    setFusedRotationReady();
+
+#if SEND_ACCELERATION
+    {
+        acceleration = this->imu.getVector(Adafruit_BNO055::VECTOR_LINEARACCEL);
+        setAccelerationReady();
     }
+#endif
 }
 
 void BNO055Sensor::startCalibration(int calibrationType) {

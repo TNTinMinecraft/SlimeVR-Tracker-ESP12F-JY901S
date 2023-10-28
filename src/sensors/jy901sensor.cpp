@@ -22,87 +22,103 @@
     SOFTWARE.
 */
 #include "sensors/jy901sensor.h"
-#include "network/network.h"
-#include "ledmgr.h"
+#include "GlobalVars.h"
+#include "utils.h"
 
-void JY901Sensor::setupJY901(uint8_t sensorId, uint8_t addr)
-{
-    this->addr = addr;
-    this->sensorId = sensorId;
-    this->sensorOffset = {Quat(Vector3(0, 0, 1), sensorId == 0 ? IMU_ROTATION : SECOND_IMU_ROTATION)};
-}
 
 void JY901Sensor::motionSetup()
 {
-    if (!imu.StartIIC(addr))
+	if (!imu.StartIIC(addr))
     {
-        Serial.print("[ERR] IMU: Can't connect to ");
-        Serial.println(getIMUNameByType(sensorType));
-        LEDManager::signalAssert();
-        return;
+		m_Logger.fatal(
+			"Can't connect to %s at address 0x%02x",
+			getIMUNameByType(sensorType),
+			addr
+		);
+		ledManager.pattern(50, 50, 200);
+		return;
     }
-    Serial.print("[NOTICE] IMU: Connected to ");
-    Serial.print(getIMUNameByType(sensorType));
-    Serial.print(" on 0x");
-    Serial.println(addr, HEX);
-    working = true;
+	m_Logger.info(
+		"Connected to %s on 0x%02x. "
+		"Info: SW Version Major: 0x%02x ",
+		getIMUNameByType(sensorType),
+		addr
+	);
+	working = true;
 }
+
 void JY901Sensor::motionLoop()
 {
     imu.GetQuater();
-    // imu.GetAcc();
-    quaternion.set((float)imu.stcQuater.q1 / 32768, (float)imu.stcQuater.q2 / 32768, (float)imu.stcQuater.q3 / 32768, (float)imu.stcQuater.q0 / 32768);
-    quaternion *= sensorOffset;
-    // a[0] = (float)imu.stcAcc.a[0]/32768*16;
-    // a[1] = (float)imu.stcAcc.a[1]/32768*16;
-    // a[2] = (float)imu.stcAcc.a[2]/32768*16;
-    // newData = true;
-    if (!OPTIMIZE_UPDATES || !lastQuatSent.equalsWithEpsilon(quaternion))
-    {
-        newData = true;
-        lastQuatSent = quaternion;
-    }
-    tap = imu.GetTapDetector();
+    
+	fusedRotation.set(
+		(float)imu.stcQuater.q1 / 32768,
+		(float)imu.stcQuater.q2 / 32768,
+		(float)imu.stcQuater.q3 / 32768,
+		(float)imu.stcQuater.q0 / 32768
+	);
+	fusedRotation *= sensorOffset;
+#if SEND_ACCELERATION
+	{
+		imu.GetAcc();
+		acceleration[0] = (float)imu.stcAcc.a[0]/32768*16;
+		acceleration[1] = (float)imu.stcAcc.a[1]/32768*16;
+		acceleration[2] = (float)imu.stcAcc.a[2]/32768*16;
+		setAccelerationReady();
+	}
+#endif  // SEND_ACCELERATION
+	setFusedRotationReady();
+	tap = imu.GetTapDetector();
 }
 
 void JY901Sensor::sendData()
 {
-    if (newData)
-    {
-        newData = false;
-        Network::sendRotationData(&quaternion, DATA_TYPE_NORMAL, 1, sensorId);
-#ifdef FULL_DEBUG
-        Serial.print("[DBG] Quaternion: ");
-        Serial.print(quaternion.x);
-        Serial.print(",");
-        Serial.print(quaternion.y);
-        Serial.print(",");
-        Serial.print(quaternion.z);
-        Serial.print(",");
-        Serial.println(quaternion.w);
+	if (newFusedRotation) {
+		newFusedRotation = false;
+		networkConnection.sendRotationData(
+			sensorId,
+			&fusedRotation,
+			DATA_TYPE_NORMAL,
+			calibrationAccuracy
+		);
+
+#ifdef DEBUG_SENSOR
+		m_Logger.trace("Quaternion: %f, %f, %f, %f", UNPACK_QUATERNION(fusedRotation));
 #endif
-    }
-    if (tap != 0)
-    {
-        Network::sendTap(tap, sensorId);
-        tap = 0;
-#ifdef FULL_DEBUG
-        Serial.print("[DBG] Tap: ");
-        Serial.println(tap);
+
+#if SEND_ACCELERATION
+		if (newAcceleration) {
+			newAcceleration = false;
+			networkConnection.sendSensorAcceleration(
+				this->sensorId,
+				this->acceleration
+			);
+		}
 #endif
-    }
+	}
+	if (tap != 0) {
+		networkConnection.sendSensorTap(sensorId, tap);
+		tap = 0;
+	}
 }
+
 void JY901Sensor::startCalibration(int calibrationType)
 {
-    LEDManager::pattern(CALIBRATING_LED, 20, 20, 10);
-    LEDManager::blink(CALIBRATING_LED, 2000);
-    imu.Unlock();
+#ifdef CALIBRATING_LED
+	calibreledManager.pattern(20, 20, 10);
+	calibreledManager.blink(2000);
+#endif
+	imu.Unlock();
     delay(2000);
-    LEDManager::on(CALIBRATING_LED);
-    imu.SetDirection(1);
+#ifdef CALIBRATING_LED
+	calibreledManager.on();
+#endif
+	imu.SetDirection(1);
     imu.SetCalsw(calibrationType);
     delay(6000);
-    LEDManager::off(CALIBRATING_LED);
-    imu.Save(0);
+#ifdef CALIBRATING_LED
+	calibreledManager.off();
+#endif
+	imu.Save(0);
     delay(100);
 }
